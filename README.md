@@ -1,5 +1,6 @@
 # 📄 CVFinder – Recherche Automatique de CVs Publics
-
+<p align="center">
+   <img src="Cvfinder-cxs.png" width="100%">
 **CVFinder** est un outil en Python permettant de rechercher, télécharger et analyser des CVs publics (souvent au format PDF) à partir de recherches Google personnalisées ("Google Dorks").
 
 ---
