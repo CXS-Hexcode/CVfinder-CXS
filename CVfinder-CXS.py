@@ -1,4 +1,5 @@
 import os
+import random
 import requests
 import fitz
 from googlesearch import search
@@ -10,6 +11,7 @@ import logging
 import hashlib
 import json
 from concurrent.futures import ThreadPoolExecutor
+
 init(autoreset=True)
 
 if not os.path.exists('cv_results'):
@@ -31,6 +33,35 @@ def intro():
     print(f"{Fore.CYAN}{'='*80}")
     print(f"{Style.DIM}Recherche automatique de CVs publics (PDF, LinkedIn, etc.)\n")
 
+def get_proxies_from_file(file_path):
+    proxies = []
+    try:
+        with open(file_path, 'r') as file:
+            proxies = [line.strip() for line in file.readlines() if line.strip()]
+    except Exception as e:
+        print(f"{Fore.RED}[!] Erreur lors de la lecture du fichier de proxies : {e}")
+        logging.error(f"Erreur lors de la lecture du fichier de proxies : {e}")
+    return proxies
+
+def get_random_proxy(proxies):
+    if proxies:
+        return random.choice(proxies)
+    return None
+
+def make_request(url, proxies=None, **kwargs):
+    proxy = get_random_proxy(proxies) if proxies else None
+    proxies_dict = {
+        "http": proxy,
+        "https": proxy,
+    } if proxy else None
+
+    try:
+        response = requests.get(url, proxies=proxies_dict, **kwargs)
+        return response
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Erreur avec le proxy {proxy} pour {url}: {e}")
+        return None
+
 def build_dorks(name=None, email=None):
     base = f'"{name}"' if name else f'"{email}"'
     dorks = [
@@ -49,7 +80,7 @@ def build_dorks(name=None, email=None):
     ]
     return dorks
 
-def search_google_dorks(dorks, max_links=5):
+def search_google_dorks(dorks, max_links=5, proxies=None):
     urls = []
     for query in dorks:
         print(f"{Fore.YELLOW}[?] Requête : {Style.BRIGHT}{query}")
@@ -60,12 +91,12 @@ def search_google_dorks(dorks, max_links=5):
             print(f"{Fore.RED}[!] Erreur Google Search : {e}")
     return list(set(urls))
 
-def download_pdf(url):
+def download_pdf(url, proxies=None):
     attempts = 3
     for attempt in range(attempts):
         try:
-            r = requests.get(url, timeout=10)
-            if r.status_code == 200 and "pdf" in r.headers.get('Content-Type', ''):
+            r = make_request(url, proxies=proxies, timeout=10)
+            if r and r.status_code == 200 and "pdf" in r.headers.get('Content-Type', ''):
                 file_name = url.split("/")[-1].split('?')[0]
                 if not file_name.endswith(".pdf"):
                     file_name += ".pdf"
@@ -98,18 +129,6 @@ def extract_pdf_info(filepath):
         print(f"{Fore.RED}[!] Erreur extraction PDF : {e}")
         logging.error(f"Erreur extraction PDF : {e}")
         return {}
-    
-def extract_enriched_text(text):
-    exp_pattern = r"(Expérience professionnelle|Experiences)(.*?)(Formation|Skills|Compétences|Education)"
-    formation_pattern = r"(Formation|Education)(.*?)(Compétences|Skills)"
-    experiences = re.findall(exp_pattern, text, re.DOTALL)
-    formations = re.findall(formation_pattern, text, re.DOTALL)
-    
-    return {
-        'exp': experiences,
-        'formation': formations,
-        'text': text[:800] 
-    }
 
 def generate_csv_report(results, name_or_email):
     filename = f'cv_results/rapport_{name_or_email.replace(" ", "_").replace("@", "_")}.csv'
@@ -122,29 +141,16 @@ def generate_csv_report(results, name_or_email):
                              res['info'].get('text', '')[:200]])
     print(f"\n{Fore.BLUE}[✔] Rapport CSV sauvegardé : {Style.BRIGHT}{filename}")
 
-def cache_results(search_query, results):
-    hash_query = hashlib.md5(search_query.encode('utf-8')).hexdigest()
-    cache_file = f"cv_results/cache_{hash_query}.json"
-
-    if os.path.exists(cache_file):
-        print(f"[Cache] Chargement des résultats depuis le cache.")
-        with open(cache_file, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    else:
-        with open(cache_file, 'w', encoding='utf-8') as f:
-            json.dump(results, f)
-        return results
-
-def run_cvfinder(name=None, email=None):
+def run_cvfinder(name=None, email=None, proxies=None):
     dorks = build_dorks(name, email)
     print(f"{Fore.MAGENTA}Recherche en cours...\n")
-    urls = search_google_dorks(dorks)
+    urls = search_google_dorks(dorks, proxies=proxies)
     results = []
 
     for url in urls:
         if ".pdf" in url:
             print(f"{Fore.CYAN}[~] Tentative de téléchargement : {url}")
-            pdf_path = download_pdf(url)
+            pdf_path = download_pdf(url, proxies=proxies)
             if pdf_path:
                 info = extract_pdf_info(pdf_path)
 
@@ -162,13 +168,22 @@ def run_cvfinder(name=None, email=None):
 
 if __name__ == "__main__":
     intro()
+    use_proxies = input("Souhaitez-vous utiliser des proxies ? (y/n) : ").strip().lower()
+    
+    proxies = []
+    if use_proxies == "y":
+        proxies_path = input("Entrez le chemin vers le fichier contenant les proxies : ").strip()
+        proxies = get_proxies_from_file(proxies_path)
+        if not proxies:
+            print(f"{Fore.RED}[!] Aucun proxy valide trouvé dans le fichier.")
+
     choice = input("🔎 Recherche par (1) Nom/Prénom ou (2) Email ? [1/2] : ")
 
     if choice.strip() == "1":
         name = input("Entrez le nom complet (ex: Jean Dupont) : ")
-        run_cvfinder(name=name.strip())
+        run_cvfinder(name=name.strip(), proxies=proxies)
     elif choice.strip() == "2":
         email = input("Entrez l'email (ex: jean.dupont@gmail.com) : ")
-        run_cvfinder(email=email.strip())
+        run_cvfinder(email=email.strip(), proxies=proxies)
     else:
         print(f"{Fore.RED}Choix invalide.")
